@@ -59,6 +59,23 @@ const CodeCompletionSchema = z.object({
   streamToFile: z.boolean().optional(),
 });
 
+const ChatSchema = z.object({
+  messages: z.array(z.object({
+    role: z.enum(['system', 'user', 'assistant']),
+    content: z.string(),
+  })),
+  model: z.enum([
+    MISTRAL_MODELS.MISTRAL_LARGE,
+    MISTRAL_MODELS.MISTRAL_SMALL,
+    MISTRAL_MODELS.MINISTRAL_8B,
+    MISTRAL_MODELS.MINISTRAL_3B,
+  ]).optional(),
+  temperature: z.number().min(0).max(1).optional(),
+  top_p: z.number().min(0).max(1).optional(),
+  max_tokens: z.number().positive().optional(),
+  stop: z.array(z.string()).optional(),
+});
+
 // Format Mistral API response
 function formatResponse(completion: CompletionResponse): string {
   if (!completion.choices || completion.choices.length === 0) {
@@ -146,6 +163,69 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           required: ["code", "task"],
         },
       },
+      {
+        name: "chat",
+        description: "General-purpose chat completion for reasoning, analysis, planning, and understanding using Mistral's general models",
+        inputSchema: {
+          type: "object",
+          properties: {
+            messages: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  role: {
+                    type: "string",
+                    enum: ["system", "user", "assistant"],
+                    description: "The role of the message sender"
+                  },
+                  content: {
+                    type: "string",
+                    description: "The content of the message"
+                  }
+                },
+                required: ["role", "content"]
+              },
+              description: "Array of conversation messages"
+            },
+            model: {
+              type: "string",
+              enum: [
+                MISTRAL_MODELS.MISTRAL_LARGE,
+                MISTRAL_MODELS.MISTRAL_SMALL,
+                MISTRAL_MODELS.MINISTRAL_8B,
+                MISTRAL_MODELS.MINISTRAL_3B,
+              ],
+              description: "Model to use (optional, defaults to mistral-large-latest)"
+            },
+            temperature: {
+              type: "number",
+              minimum: 0,
+              maximum: 1,
+              description: "Sampling temperature (optional, defaults to 0.7)"
+            },
+            top_p: {
+              type: "number",
+              minimum: 0,
+              maximum: 1,
+              description: "Nucleus sampling threshold (optional, defaults to 1)"
+            },
+            max_tokens: {
+              type: "number",
+              minimum: 1,
+              description: "Maximum number of tokens to generate (optional, defaults to 1000)"
+            },
+            stop: {
+              type: "array",
+              items: {
+                type: "string"
+              },
+              description: "Stop sequences to end generation (optional)"
+            }
+          },
+          required: ["messages"],
+        },
+      },
     ],
   };
 });
@@ -153,6 +233,45 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 // Handle tool execution
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
+
+  if (name === "chat") {
+    try {
+      const params = ChatSchema.parse(args);
+
+      // Use general Mistral API for chat
+      const completion = await mistralApi.chatCompletion(params.messages, {
+        model: params.model || MISTRAL_MODELS.MISTRAL_LARGE,
+        temperature: params.temperature,
+        top_p: params.top_p,
+        max_tokens: params.max_tokens,
+        stop: params.stop,
+      });
+
+      // Return the response content directly without code extraction
+      const content = completion.choices[0].message.content;
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: content,
+          },
+        ],
+      };
+    } catch (error) {
+      console.error("Error processing chat request:", error);
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error: ${error instanceof Error ? error.message : 'Unknown error occurred'}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  }
 
   if (name === "code_completion") {
     try {

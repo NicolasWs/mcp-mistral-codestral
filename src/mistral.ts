@@ -1,14 +1,29 @@
 import axios, { AxiosError } from 'axios';
 import { z } from 'zod';
 
-const MISTRAL_API_BASE = 'https://api.mistral.ai/v1';
+const CODESTRAL_API_BASE = 'https://codestral.mistral.ai/v1';
+const MISTRAL_API_BASE = 'https://api.mistral.com/v1';
 
 export const MISTRAL_MODELS = {
+  // Code-specific models (use Codestral endpoint)
   CODESTRAL: 'codestral-latest',
-  CODESTRAL_MAMBA: 'codestral-mamba-latest'
+  CODESTRAL_MAMBA: 'codestral-mamba-latest',
+  // General models (use standard Mistral endpoint)
+  MISTRAL_LARGE: 'mistral-large-latest',
+  MISTRAL_SMALL: 'mistral-small-latest',
+  MINISTRAL_8B: 'ministral-8b-latest',
+  MINISTRAL_3B: 'ministral-3b-latest',
 } as const;
 
 export type MistralModel = typeof MISTRAL_MODELS[keyof typeof MISTRAL_MODELS];
+
+// Helper to determine which API base to use
+function getApiBase(model: MistralModel): string {
+  if (model === MISTRAL_MODELS.CODESTRAL || model === MISTRAL_MODELS.CODESTRAL_MAMBA) {
+    return CODESTRAL_API_BASE;
+  }
+  return MISTRAL_API_BASE;
+}
 
 // Response schema validation
 const CompletionResponseSchema = z.object({
@@ -35,14 +50,27 @@ export type CompletionResponse = z.infer<typeof CompletionResponseSchema>;
 
 export class MistralAPI {
   private apiKey: string;
-  private client: ReturnType<typeof axios.create>;
+  private codestralClient: ReturnType<typeof axios.create>;
+  private mistralClient: ReturnType<typeof axios.create>;
 
   constructor(apiKey: string) {
     if (!apiKey || apiKey.trim().length === 0) {
       throw new Error('API key cannot be empty');
     }
     this.apiKey = apiKey.trim();
-    this.client = axios.create({
+
+    // Create separate clients for each API endpoint
+    this.codestralClient = axios.create({
+      baseURL: CODESTRAL_API_BASE,
+      headers: {
+        'Authorization': `Bearer ${this.apiKey}`,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      timeout: 30000, // 30 second timeout
+    });
+
+    this.mistralClient = axios.create({
       baseURL: MISTRAL_API_BASE,
       headers: {
         'Authorization': `Bearer ${this.apiKey}`,
@@ -53,10 +81,22 @@ export class MistralAPI {
     });
   }
 
+  // Helper to get the right client for a model
+  private getClient(model: MistralModel) {
+    return getApiBase(model) === CODESTRAL_API_BASE
+      ? this.codestralClient
+      : this.mistralClient;
+  }
+
   async validateApiKey(): Promise<boolean> {
+    // Codestral endpoint doesn't have a /models endpoint
+    // We'll validate by attempting a simple chat completion instead
     try {
-      const response = await this.client.get('/models');
-      console.error('Models response:', response.data); // Debug log
+      await this.chatCompletion(
+        [{ role: 'user', content: 'test' }],
+        { max_tokens: 1 }
+      );
+      console.error('Successfully connected to Codestral API');
       return true;
     } catch (error) {
       if (error instanceof AxiosError) {
@@ -66,7 +106,7 @@ export class MistralAPI {
           headers: error.response?.headers
         });
         if (error.response?.status === 401) {
-          throw new Error('Invalid API key. Please check your Mistral API key.');
+          throw new Error('Invalid API key. Please check your Codestral API key.');
         }
         throw new Error(`API validation failed: ${error.message}`);
       }
@@ -85,8 +125,11 @@ export class MistralAPI {
     } = {}
   ) {
     try {
-      const response = await this.client.post('/chat/completions', {
-        model: options.model || MISTRAL_MODELS.CODESTRAL,
+      const model = options.model || MISTRAL_MODELS.CODESTRAL;
+      const client = this.getClient(model);
+
+      const response = await client.post('/chat/completions', {
+        model,
         messages,
         temperature: options.temperature ?? 0.7,
         top_p: options.top_p ?? 1,
@@ -145,7 +188,8 @@ export class MistralAPI {
 
       console.error('FIM Request Body:', JSON.stringify(requestBody, null, 2));
 
-      const response = await this.client.post('/fim/completions', requestBody);
+      // FIM is only available on Codestral models
+      const response = await this.codestralClient.post('/fim/completions', requestBody);
 
       console.error('FIM Response:', {
         status: response.status,
