@@ -1,6 +1,6 @@
 [![MseeP Badge](https://mseep.net/pr/bsmi021-mcp-mistral-codestral-badge.jpg)](https://mseep.ai/app/bsmi021-mcp-mistral-codestral)
 
-# Mistral Codestral MCP Server
+# Mistral Codestral MCP Ser
 
 A Model Context Protocol (MCP) server that provides seamless integration with Mistral AI's Codestral and general-purpose language models, enabling AI-powered code completion, bug fixing, test generation, and general reasoning capabilities through a standardized interface.
 
